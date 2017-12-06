@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.IO;
+using System.Configuration;
 
 namespace MoneroIdleMiner
 {
@@ -23,7 +24,18 @@ namespace MoneroIdleMiner
         [DllImport("Kernel32.dll")]
         private static extern uint GetLastError();
 
-        public static uint GetIdleTime()
+        private static readonly char[] AppSettingsSplitter = { '|' };
+
+        static int minersRunning = 0;
+
+        private class Config
+        {
+            public int IdleTimeThreshold;
+            public int IdleScanFrequency;
+            public string[] Programs;
+        }
+
+        private static uint GetIdleTime()
         {
             LASTINPUTINFO LastUserAction = new LASTINPUTINFO();
             LastUserAction.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(LastUserAction);
@@ -31,12 +43,12 @@ namespace MoneroIdleMiner
             return ((uint)Environment.TickCount - LastUserAction.dwTime);
         }
 
-        public static long GetTickCount()
+        private static long GetTickCount()
         {
             return Environment.TickCount;
         }
 
-        public static long GetLastInputTime()
+        private static long GetLastInputTime()
         {
             LASTINPUTINFO LastUserAction = new LASTINPUTINFO();
             LastUserAction.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(LastUserAction);
@@ -48,83 +60,116 @@ namespace MoneroIdleMiner
             return LastUserAction.dwTime;
         }
 
-        static void p_Exited(object sender, EventArgs e)
+        private static void p_Exited(object sender, EventArgs e)
         {
-            minerRunning = false;
+            minersRunning -= 1;
         }
 
-        static bool minerRunning = false;
-
-        static void ShowErrorAndExit(string error)
+        private static void ShowErrorAndExit(string error)
         {
             Console.WriteLine(error);
             Console.ReadLine();
             Environment.Exit(0);
         }
 
-        static string[] ReadSettingsFile(string path)
+        static Config ReadSettingsFile()
         {
-            if (!File.Exists(path))
-            {
-                ShowErrorAndExit("Settings file not found. Make sure " + path + " is in the same folder as this application");
+            var manager = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+            var obj = new Config();
+
+            if(manager.AppSettings.Settings.Count == 0) {
+                obj.IdleTimeThreshold = 60000;
+                obj.IdleScanFrequency = 1000;
+                obj.Programs = new string[1];
+
+                manager.AppSettings.Settings.Add("IdleTimeThreshold", obj.IdleTimeThreshold.ToString());
+                manager.AppSettings.Settings.Add("IdleScanFrequency", obj.IdleScanFrequency.ToString());
+                manager.AppSettings.Settings.Add("Programs", "");
+
+                manager.Save(ConfigurationSaveMode.Modified);
+                ConfigurationManager.RefreshSection("appSettings");
+
+                Console.WriteLine("Created default configuration file at \"" + AppDomain.CurrentDomain.SetupInformation.ConfigurationFile + "\"");
+
+                return obj;
             }
 
-            var settings = File.ReadAllLines(path);
+            Console.WriteLine("Reading configuration file: \"" + AppDomain.CurrentDomain.SetupInformation.ConfigurationFile + "\"");
 
-            if (settings.Length < 2)
-            {
-                ShowErrorAndExit("Settings file is empty or doesn't contain complete settings. First line should represent the idle timer and the second line should represent the miner .exe name");
+            if (string.IsNullOrEmpty(manager.AppSettings.Settings["IdleTimeThreshold"].Value) ||
+                !int.TryParse(manager.AppSettings.Settings["IdleTimeThreshold"].Value, out obj.IdleTimeThreshold)) {
+                obj.IdleTimeThreshold = 60000;
+                manager.AppSettings.Settings["IdleTimeThreshold"].Value = obj.IdleTimeThreshold.ToString();
             }
 
-            return settings;
+            if (string.IsNullOrEmpty(manager.AppSettings.Settings["IdleScanFrequency"].Value) ||
+                !int.TryParse(manager.AppSettings.Settings["IdleScanFrequency"].Value, out obj.IdleScanFrequency)) {
+                obj.IdleScanFrequency = 1000;
+                manager.AppSettings.Settings["IdleScanFrequency"].Value = obj.IdleScanFrequency.ToString();
+            }
+
+            if (string.IsNullOrEmpty(manager.AppSettings.Settings["Programs"].Value))
+                throw new Exception("Missing \"Programs\" field in configuration file. " +
+                    "Please indicate which programs to start when the system is idle and seperate them using the \"" + AppSettingsSplitter + "\" key if there's more than one.");
+            else
+                obj.Programs = manager.AppSettings.Settings["Programs"].Value.Split(AppSettingsSplitter);
+
+            manager.Save(ConfigurationSaveMode.Modified);
+            ConfigurationManager.RefreshSection("appSettings");
+
+            return obj;
         }
 
         static void Main(string[] args)
         {
-            var settings = ReadSettingsFile("idleMiner_settings.txt");
-            int idleTimer = int.Parse(settings[0]) * 1000;
-            string minerName = settings[1];
+            var settings = ReadSettingsFile();
 
+            var processes = new Process[settings.Programs.Length];
             ProcessStartInfo processStartInfo;
-            Process process;
 
             processStartInfo = new ProcessStartInfo();
             processStartInfo.CreateNoWindow = false;
             processStartInfo.UseShellExecute = false;
-            processStartInfo.FileName = minerName;
 
-            process = new Process();
-            process.StartInfo = processStartInfo;
-            process.EnableRaisingEvents = true;
+            for(var i = 0; i < settings.Programs.Length; i++) {
+                processStartInfo.FileName = settings.Programs[i];
+                processes[i] = new Process();
+                processes[i].StartInfo = processStartInfo;
+                processes[i].EnableRaisingEvents = true;
 
-            process.OutputDataReceived += new DataReceivedEventHandler
-            (
-                delegate (object sender, DataReceivedEventArgs e)
-                {
-                    Console.WriteLine(e.Data);
-                }
-            );
-
-            process.Exited += p_Exited;
+                processes[i].Exited += p_Exited;
+                processes[i].OutputDataReceived += new DataReceivedEventHandler
+                ( (object sender, DataReceivedEventArgs e) => { Console.WriteLine(e.Data); } );
+            }
 
             Console.WriteLine("Waiting for system idle...");
 
             while (true)
             {
-                Thread.Sleep(1000);
+                Thread.Sleep(settings.IdleScanFrequency);
 
-                if (GetIdleTime() >= idleTimer && !minerRunning)
+                if (GetIdleTime() >= settings.IdleTimeThreshold && minersRunning == 0)
                 {
-                    Console.WriteLine("System is idle. Starting miner...");
-                    process.Start();
-                    minerRunning = true;
+                    Console.WriteLine("System is idle. Starting miner" + (settings.Programs.Length > 1 ? "s" : "") + "...");
+
+                    foreach (var p in processes)
+                        try { p.Start(); } catch (Exception e)
+                            { Console.WriteLine("Error starting process: " + e.ToString()); }
                 }
 
-                if (GetIdleTime() < idleTimer && minerRunning)
+                if (GetIdleTime() < settings.IdleTimeThreshold && minersRunning > 0)
                 {
                     Console.WriteLine("System no longer idle. MINER STOPPED.");
-                    process.Kill();
-                    minerRunning = false;
+
+                    foreach(var p in processes) {
+                        if (p.HasExited)
+                            continue;
+
+                        p.Kill();
+                    }
+
+                    while (minersRunning != 0)
+                        System.Threading.Thread.Sleep(100);
                 }
 
             }
