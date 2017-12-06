@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using System.IO;
 
 namespace ConsoleApp1
@@ -64,16 +62,16 @@ namespace ConsoleApp1
             Environment.Exit(0);
         }
 
-        static List<string> ReadSettingsFile(string path)
+        static string[] ReadSettingsFile(string path)
         {
             if (!File.Exists(path))
             {
                 ShowErrorAndExit("Settings file not found. Make sure " + path + " is in the same folder as this application");
             }
 
-            var settings = File.ReadAllLines(path).ToList();
+            var settings = File.ReadAllLines(path);
 
-            if (settings.Count < 2)
+            if (settings.Length < 2)
             {
                 ShowErrorAndExit("Settings file is empty or doesn't contain complete settings. First line should represent the idle timer and the second line should represent the miner .exe name");
             }
