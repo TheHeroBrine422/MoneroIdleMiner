@@ -6,7 +6,7 @@ using System.Text;
 using System.Threading;
 using System.IO;
 
-namespace ConsoleApp1
+namespace MoneroIdleMiner
 {
     internal struct LASTINPUTINFO
     {
