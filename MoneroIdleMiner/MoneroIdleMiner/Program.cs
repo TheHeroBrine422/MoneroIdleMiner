@@ -94,7 +94,21 @@ namespace ConsoleApp1
             processStartInfo.CreateNoWindow = false;
             processStartInfo.UseShellExecute = false;
             processStartInfo.FileName = minerName;
+            
+            string minerNameNotIdle = settings[2];
 
+            ProcessNIStartInfo processStartInfo;
+            ProcessNI process;
+
+            ProcessNIStartInfo = new ProcessStartInfo();
+            ProcessNIStartInfo.CreateNoWindow = false;
+            ProcessNIStartInfo.UseShellExecute = false;
+            ProcessNIStartInfo.FileName = minerNameNotIdle;
+
+            ProcessNI = new Process();
+            ProcessNI.StartInfo = ProcessNIStartInfo;
+            ProcessNI.EnableRaisingEvents = true;
+            
             process = new Process();
             process.StartInfo = processStartInfo;
             process.EnableRaisingEvents = true;
@@ -108,16 +122,20 @@ namespace ConsoleApp1
             );
 
             process.Exited += p_Exited;
-
+            
+            Console.WriteLine("Starting Non-idle Miner");
+            processNI.Start();
             Console.WriteLine("Waiting for system idle...");
-
+            
             while (true)
             {
                 Thread.Sleep(1000);
 
                 if (GetIdleTime() >= idleTimer && !minerRunning)
                 {
-                    Console.WriteLine("System is idle. Starting miner...");
+                    Console.WriteLine("System is idle. Stoping Non-Idle Miner");
+                    processNI.Kill();
+                    Console.WriteLine("Starting miner...");
                     process.Start();
                     minerRunning = true;
                 }
@@ -127,6 +145,8 @@ namespace ConsoleApp1
                     Console.WriteLine("System no longer idle. MINER STOPPED.");
                     process.Kill();
                     minerRunning = false;
+                    Console.WriteLine("Starting Non-Idle Miner");
+                    processNI.Start();
                 }
 
             }
